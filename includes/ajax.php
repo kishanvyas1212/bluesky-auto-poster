@@ -20,6 +20,96 @@ add_action('wp_ajax_delete_scheduled_post', 'delete_scheduled_post');
 add_action('wp_ajax_fetch_scheduled_post_details', 'fetch_scheduled_post_details');
 
 
+// This function will generate the refresh token and store to the database 
+function generate_refresh_token($username,$password){
+    $login_url = "https://bsky.social/xrpc/com.atproto.server.createSession";
+    $login_data = json_encode([
+        "identifier" => $username,
+        "password" => $password
+    ]);
+
+    $login_headers = [
+        "Content-Type: application/json"
+    ];
+
+    // Initialize cURL session for login
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $login_url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $login_data);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $login_headers);
+
+    $login_response = curl_exec($ch);
+    curl_close($ch);
+    // Decode the login response
+    $login_data = json_decode($login_response, true);
+    
+    // Check if the login was successful and extract JWT tokens
+    if (isset($login_data['accessJwt']) && isset($login_data['refreshJwt'])) {
+        $did = $login_data['did'];
+        $access_jwt = $login_data['accessJwt'];
+        error_log("Access token" . $access_jwt);
+        $refresh_jwt = $login_data['refreshJwt'];
+        error_log("Inside the if conditions");
+        error_log($refresh_jwt);
+        return ['refresh_token'=>$refresh_jwt,
+        'did'=>$did];
+    }
+    else return 0;
+
+}
+function delete_posted_post(){
+
+}
+function refresh_accress_token($refresh_jwt){
+
+    $url = "https://bsky.social/xrpc/com.atproto.server.refreshSession";
+
+    // Set up headers
+    $headers = [
+        'Content-Type: application/json',
+        'Authorization: Bearer ' . $refresh_jwt
+    ];
+
+    // Initialize cURL
+    $ch = curl_init($url);
+
+    // Configure cURL options
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers); // Add headers
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true); // Return the response as a string
+    curl_setopt($ch, CURLOPT_POST, true);           // HTTP POST method
+    // curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([])); // Send an empty JSON body
+
+    // Execute the request
+    $response = curl_exec($ch);
+
+    $http_status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
+    // Check for errors
+    if (curl_errno($ch)) {
+        curl_close($ch);
+        return ['error' => 'Curl error: ' . curl_error($ch)];
+    }
+
+    curl_close($ch);
+
+    // Decode the response
+    $decoded_response = json_decode($response, true);
+
+    // Check for successful response
+    if ($http_status === 200 && isset($decoded_response['accessJwt'])) {
+        error_log($decoded_response['accessJwt']);
+        return ['token'=> $decoded_response['accessJwt'],'status'=> 1]; // Return accessJwt
+    } else {
+        return [
+            'error' => 'Request failed',
+            'status' => 0,
+            'response' => $decoded_response
+        ];
+    }
+}
+
 function add_bluesky_network() {
     if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'bluesky_nonce')) {
         wp_send_json_error(['message' => 'Invalid nonce.']);
@@ -32,17 +122,28 @@ function add_bluesky_network() {
     $network_name = sanitize_text_field($_POST['network_name']);
     $username = sanitize_text_field($_POST['username']);
     $password = sanitize_text_field($_POST['password']);
-
+    error_log($network_name);
     if (!$network_name || !$username || !$password) {
         wp_send_json_error(['message' => 'All fields are required.']);
     }
+    
+    $response = generate_refresh_token($username,$password);
+    $refreshJWT = $response['refresh_token'];
+    $did = $response['did'];
 
+    if($refreshJWT!=0){ 
     $result = $wpdb->insert($table_name, [
         'network_name' => $network_name,
         'username' => $username,
         'password' => $password,
+        'refreshJWT' =>$refreshJWT,
+        'did' =>$did
     ]);
-
+    }
+    else{
+        wp_send_json_error(['message' => 'Can not generated refresh token please try again']);
+    }
+    error_log(print_r($result,true));
     if ($result) {
         wp_send_json_success(['message' => 'Network added successfully!']);
     } else {
@@ -109,12 +210,18 @@ function update_bluesky_network() {
     $network_name = isset($_POST['network_name']) ? sanitize_text_field($_POST['network_name']) : '';
     $username = isset($_POST['username']) ? sanitize_text_field($_POST['username']) : '';
     $password = isset($_POST['password']) ? sanitize_text_field($_POST['password']) : '';
+    if (!$network_name || !$username || !$password) {
+        wp_send_json_error(['message' => 'All fields are required.']);
+    }
+    
+    $response = generate_refresh_token($username,$password);
+    $refreshJWT = $response['refresh_token'];
+    $did = $response['did'];
 
     if (!$network_id || !$network_name || !$username || !$password) {
         wp_send_json_error(['message' => 'All fields are required.']);
         return;
     }
-
     global $wpdb;
     $table_name = $wpdb->prefix . 'bluesky_networks';
 
@@ -125,9 +232,10 @@ function update_bluesky_network() {
             'network_name' => $network_name,
             'username' => $username,
             'password' => $password,
+            'refreshJwt' => $refreshJWT,
         ],
         ['id' => $network_id],
-        ['%s', '%s', '%s'],
+        ['%s', '%s', '%s','%s'],
         ['%d']
     );
 
@@ -191,7 +299,7 @@ function bluesky_submit_post() {
     $post_type = sanitize_text_field($_POST['post_type']);
     $schedule_time = sanitize_text_field($_POST['schedule_time']); // Only for scheduled posts
     if(!empty($media_url)){
-        if (filesize($attachment_path) > 1000000) {
+        if (filesize($media_url) > 1000000) {
             wp_send_json_error(['message' => 'Attachment size too large. Maximum allowed size is 1MB.']);
             return [
                 'error' => 'Attachment size too large. Maximum allowed size is 1MB.'
@@ -230,18 +338,83 @@ function bluesky_submit_post() {
         wp_send_json_success(['message' => 'Post scheduled successfully!']);
     } else {
         // Publish immediately (direct API call can be implemented here)
-        if(empty($media_url)){ 
+         
         $i = 0;
         foreach($selected_networks as $net){
             $net = intval($net);
             $table_name2 = $wpdb->prefix . 'bluesky_networks'; 
             $query = $wpdb->prepare("SELECT * FROM $table_name2 WHERE id = %d", $net);
             $posted_posts = $wpdb->get_results($query);
+            $refresh_jwt = $posted_posts[0]->refreshJWT;
             $username = $posted_posts[0]->username;
             $password = $posted_posts[0]->password;
+            
+            $access_token = refresh_accress_token($refresh_jwt);
+            if($access_token['status']==0){
+                $response = generate_refresh_token($username,$password);
+                $refresh_token = $response['refresh_token'];
 
-            $response = text_poster($username, $password, $message);
+                if($refresh_token!=0){
+                $access_token = refresh_accress_token($refresh_jwt);
+                $table_name = $wpdb->prefix . 'bluesky_networks';
+
+                // Update the network details
+                $updated = $wpdb->update(
+                    $table_name,
+                    [
+                        'network_name' => $network_name,
+                        'username' => $username,
+                        'password' => $password,
+                        'refreshJwt' => $refreshJWT,
+                    ],
+                    ['id' => $net],
+                    ['%s', '%s', '%s','%s'],
+                    ['%d']
+                );
+                }
+                else{
+                    error_log("User name or password is not proper for");
+                    error_log($net);
+
+                }
+            }
+            $access_token = $access_token['token'];
+            
+
+            if(empty($media_url)) {
+            $response = text_poster($access_token,$message,$username);
+            }
+            else if(!empty($media_url)) {
+                $file_extension = pathinfo($media_url, PATHINFO_EXTENSION);
+                $mime_types = [
+                    'mp4' => 'video/mp4',
+                ];
+                
+                $mime_type = $mime_types[strtolower($file_extension)] ?? null;
+                
+                if ($mime_type === 'video/mp4') {
+                    $response = bluesky_post_with_video($access_token, $username, $message, $media_url);
+                }else {
+                $response = bluesky_post_with_attachment($access_token,$username, $message, $media_url);
+                }
+            }
             $response= $response['response'];
+            error_log("From Ajax line 363");
+            error_log(print_r($response,true));
+            error_log("its end here for ajax file line 363");
+            $response_data = json_decode($response, true);
+            if (isset($response_data['uri'])) {
+                // Extract the post ID from the URI using a regular expression
+                preg_match('/\/([^\/]+)$/', $response_data['uri'], $matches);
+        
+                // If a match is found, display the custom post URL
+                if (isset($matches[1])) {
+                    $post_id = $matches[1];
+                    $post_url = "https://bsky.app/profile/{$username}/post/{$post_id}";
+                }
+            }else {
+                $post_url =0;
+            }
                                
             $selected_networks_names = $selected_networks_name[$i];
             $i = $i + 1;
@@ -249,7 +422,8 @@ function bluesky_submit_post() {
             $wpdb->insert($table_name1, [
                 'network_id' => $net,
                 'network_name' => json_encode($selected_networks_names),
-                'response' => $response,
+                'response' => $post_url,
+                'actual_response' =>json_encode($response),
                 'scheduled_post_id' => 0,
                 'message' => $message,
                 'attachment_url' => $media_url,
@@ -258,36 +432,9 @@ function bluesky_submit_post() {
             ]);
         }
     }
-        else if(!empty($media_url)){
-            $i = 0;
-            foreach($selected_networks as $net){
-                $net = intval($net);
-                $table_name2 = $wpdb->prefix . 'bluesky_networks'; 
-                $query = $wpdb->prepare("SELECT * FROM $table_name2 WHERE id = %d", $net);
-                $posted_posts = $wpdb->get_results($query);
-                $username = $posted_posts[0]->username;
-                $password = $posted_posts[0]->password;
-                $response = bluesky_post_with_attachment($username, $password, $message,$media_url);
-                $response= $response['response'];
-                                   
-                $selected_networks_names = $selected_networks_name[$i];
-                $i = $i + 1;
-                $table_name1 = $wpdb->prefix .'bluesky_posted_posts';
-                $wpdb->insert($table_name1, [
-                    'network_id' => $net,
-                    'network_name' => json_encode($selected_networks_names),
-                    'response' => $response,
-                    'scheduled_post_id' => 0,
-                    'message' => $message,
-                    'attachment_url' => $media_url,
-                    'schedule_time' => $schedule_time,
-                    'posted_at' => current_time('mysql')
-                ]);
-            }
-        }
+        
         wp_send_json_success(['message' => 'Post published successfully!']);
     }
-}
 
 function toggle_schedule_status() {
     global $wpdb;

@@ -10,9 +10,9 @@ if (!defined('ABSPATH')) exit; // Exit if accessed directly
 // Add custom cron schedule for every minute.
 add_filter('cron_schedules', 'bluesky_custom_cron_intervals');
 function bluesky_custom_cron_intervals($schedules) {
-    $schedules['every_minute'] = [
-        'interval' => 60, // 1 minute
-        'display' => __('Every Minute'),
+    $schedules['every_five_minutes'] = [
+        'interval' => 300, // 5 minute
+        'display' => __('Every 5 Minutes'),
     ];
     return $schedules;
 }
@@ -22,6 +22,7 @@ function create_bluesky_tables() {
     $table_name1 = $wpdb->prefix . 'bluesky_networks';
     $table_name2 = $wpdb->prefix . 'bluesky_scheduled_posts';
     $table_name3 = $wpdb->prefix . 'bluesky_posted_posts';
+    $table_name4 = $wpdb->prefix . 'bluesky_posts_reports';
 
     // Check if the tables exist
     if ($wpdb->get_var("SHOW TABLES LIKE '$table_name1'") != $table_name1) {
@@ -31,7 +32,10 @@ function create_bluesky_tables() {
             network_name VARCHAR(255) NOT NULL,
             username VARCHAR(255) NOT NULL,
             password VARCHAR(255) NOT NULL,
+            refreshJWT TEXT NOT NULL,
+            did TEXT NOT NULL,
             status TINYINT(1) DEFAULT 1
+
         ) $charset_collate;";
         $wpdb->query($sql);
     }
@@ -59,6 +63,7 @@ function create_bluesky_tables() {
             network_name VARCHAR(255) NOT NULL,
             scheduled_post_id INT NOT NULL,
             response TEXT,
+            actual_response Text,
             message TEXT NOT NULL,
             attachment_url VARCHAR(255),
             schedule_time DATETIME NOT NULL,
@@ -66,13 +71,14 @@ function create_bluesky_tables() {
         ) $charset_collate;";
         $wpdb->query($sql);
     }
+    
 }
 register_activation_hook(__FILE__, 'create_bluesky_tables');
 register_activation_hook(__FILE__, 'bluesky_schedule_cron_job');
 function bluesky_schedule_cron_job() {
     error_log("this one");
     if (!wp_next_scheduled('bluesky_cron_job_hook')) {
-        wp_schedule_event(time(), 'every_minute', 'bluesky_cron_job_hook');
+        wp_schedule_event(time(), 'every_five_minutes', 'bluesky_cron_job_hook');
     }
     
 }

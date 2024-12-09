@@ -135,7 +135,7 @@ function bluesky_manage_networks() {
                     <?php endforeach; ?>
                 <?php else : ?>
                     <tr>
-                        <td colspan="4">No networks found.</td>
+                        <td colspan="4" class="nodatafound">No networks found.</td>
                     </tr>
                 <?php endif; ?>
             </tbody>
@@ -387,7 +387,11 @@ function bluesky_view_posts() {
            <?php             $table_name2 = $wpdb->prefix . 'bluesky_networks';
             $query = $wpdb->prepare("SELECT * FROM $table_name2 WHERE id = %d", $post->network_id);
             $find_user = $wpdb->get_results($query);
-            $username = $find_user[0]->username;
+            if (!empty($find_user) && is_array($find_user) && isset($find_user[0])) {
+                $username = $find_user[0]->username;
+            }
+            
+            
             ?>    
             <tr>
                             <td><?php echo esc_html($post->id); ?></td>
@@ -418,29 +422,16 @@ function bluesky_view_posts() {
                                 ?>
                             </td>
                             <td>
-                            <?php if ($post->response): ?>
+                            <?php if ($post->response !=0): ?>
     <?php 
     // Decode the JSON response to check the URI
-    $response_data = json_decode($post->response, true);
     
-    // Check if the URI exists in the response
-    if (isset($response_data['uri'])) {
-        // Extract the post ID from the URI using a regular expression
-        preg_match('/\/([^\/]+)$/', $response_data['uri'], $matches);
-
-        // If a match is found, display the custom post URL
-        if (isset($matches[1])) {
-            $post_id = $matches[1];
-            $post_url = "https://bsky.app/profile/{$username}/post/{$post_id}";
-            echo '<span class="status success"><a href="' . esc_url($post_url) . '" target="_blank">View Post</a></span>';
-        }
-    } else {
-        // If there's no URI, display the raw error message
-        echo '<span class="status failed">' . esc_html($post->response) . '</span>';
-    }
+    $post_url = $post->response;
+       echo '<span class="status success"><a href="' . esc_url($post_url) . '" target="_blank">View Post</a></span>';
     ?>
-<?php else: ?>
-    <span class="status failed">Failed</span>
+<?php else: 
+    echo '<span class="status failed">' . esc_html($post->actual_response) . '</span>';
+    ?>
 <?php endif; ?>
 
                             </td>
@@ -456,4 +447,6 @@ function bluesky_view_posts() {
         </table>
     </div>
     <?php
+    
+    
 }
