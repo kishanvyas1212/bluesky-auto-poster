@@ -214,6 +214,25 @@ require_once plugin_dir_path(__FILE__) . 'includes/ajax.php';
 require_once plugin_dir_path(__FILE__) . 'includes/posting_to_bluesky.php';
 require_once plugin_dir_path(__FILE__) . 'includes/cron.php';
 // Enqueue scripts and styles
+function enqueue_view_posted_post() {
+    $current_url = $_SERVER['REQUEST_URI'];
+    $is_target_page = false;
+    $is_target_page1=false;
+    if (strpos($current_url, 'page=bluesky-view-posts') !== false) {
+        $is_target_page = true;
+    }
+    if (strpos($current_url, 'page=bluesky-manage-posts') !== false) {
+        $is_target_page1 = true;
+    }
+    if($is_target_page == true){
+    // wp_enqueue_script('my-custom-script', plugins_url('js/my-script.js', __FILE__), array('jquery'));
+    wp_enqueue_script('media-uploader-js', plugin_dir_url(__FILE__) . 'js/view_data.js', ['jquery'], null, true);
+    }elseif($is_target_page1 == true){
+    wp_enqueue_script('media-uploader-js', plugin_dir_url(__FILE__) . 'js/schedule_data.js', ['jquery'], null, true);
+    } 
+  }
+add_action('admin_enqueue_scripts', 'enqueue_view_posted_post');
+
 function bluesky_poster_enqueue_scripts() {
     wp_enqueue_script(
         'bluesky-poster-script',

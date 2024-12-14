@@ -2,23 +2,24 @@
 // require_once plugin_dir_path(__FILE__) . 'includes/posting_to_bluesky.php';
 require_once 'posting_to_bluesky.php'; 
 add_action('wp_ajax_add_bluesky_network', 'add_bluesky_network');
-add_action('wp_ajax_nopriv_add_bluesky_network', 'add_bluesky_network');
 
 // Delete Network Action (already in your file)
 add_action('wp_ajax_delete_bluesky_network', 'delete_bluesky_network');
-add_action('wp_ajax_nopriv_delete_bluesky_network', 'delete_bluesky_network');
 
 // Fetch Network Details Action
 add_action('wp_ajax_get_network_details', 'get_network_details');
-add_action('wp_ajax_nopriv_get_network_details', 'get_network_details');
 add_action('wp_ajax_update_bluesky_network', 'update_bluesky_network');
-add_action('wp_ajax_nopriv_update_bluesky_network', 'update_bluesky_network');
 add_action('wp_ajax_toggle_bluesky_network_status', 'toggle_bluesky_network_status');
 add_action('wp_ajax_bluesky_submit_post', 'bluesky_submit_post');
 add_action('wp_ajax_toggle_schedule_status', 'toggle_schedule_status');
 add_action('wp_ajax_delete_scheduled_post', 'delete_scheduled_post');
 add_action('wp_ajax_fetch_scheduled_post_details', 'fetch_scheduled_post_details');
 add_action('wp_ajax_fetch_bluesky_posts', 'bluesky_fetch_posts');
+
+add_action('wp_ajax_bluesky_schedule_post', 'bluesky_schedule_post');
+
+add_action('wp_ajax_bluesky_delete_posted_post', 'bluesky_delete_posted_post');
+
 // This function will generate the refresh token and store to the database 
 function generate_refresh_token($username,$password){
     $login_url = "https://bsky.social/xrpc/com.atproto.server.createSession";
@@ -55,62 +56,98 @@ function generate_refresh_token($username,$password){
     else return 0;
 
 }
-function bluesky_delete_post($network_id,$post_url){
+function add_log(){
+
+}
+
+function bluesky_delete_posted_post(){
+    
     if (!current_user_can('administrator')) {
         wp_send_json_error(['message' => 'hi dear you can not access it :)'], 403);
     }
     if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'bluesky_nonce')) {; 
         wp_send_json_error(['message' => 'Invalid nonce.']);
     }
+    $post_id = $_POST['post_id'];
     global $wpdb;
-    $table_name2 = $wpdb->prefix . 'bluesky_networks';
-    $query = $wpdb->prepare("SELECT * FROM $table_name2 WHERE id = %d", $post->network_id);
-    $find_user = $wpdb->get_results($query);
-    $did = $find_user[0]->did;
-    $password = $find_user[0]->password;
-    $refreshtoken = $find_user[0]->refreshJWT;
-    $access_jwt = refresh_accress_token($refresh_token);
-    error_log(print_r($access_jwt,true));
-    $access_jwt = $access_jwt['token'];
-    $url = "https://bsky.social/xrpc/com.atproto.repo.deleteRecord";
-    $record_key =0;
-    if (preg_match('/\/([^\/]+)$/', $post_url, $matches)) {
-        $record_key = $matches[1]; // This will be "3kld4r62lcs2k"
-        echo "Extracted Post ID: " . $record_key;
-    }
-    // Prepare the body
-    error_log($record_key);
-    $body = json_encode([
-        'repo' => $did,
-        'collection' => 'app.bsky.feed.post',
-        'rkey' => $record_key, // Record key to delete
-    ]);
-
-    // Initialize cURL
-    $ch = curl_init($url);
     
-    // Set cURL options
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        "Content-Type: application/json",
-        "Authorization: Bearer $access_jwt",
-    ]);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+    $delete_status = get_option('bluesky_delete_posts', 0); 
+    if($delete_status == 1){
+        error_log(1);
+        $table_name = $wpdb->prefix . 'bluesky_posted_posts';
+        $query = $wpdb->prepare("SELECT * FROM $table_name WHERE id = %d", $post_id);
+        $post = $wpdb->get_results($query);
+        $table_name2 = $wpdb->prefix . 'bluesky_networks';
+        $query = $wpdb->prepare("SELECT * FROM $table_name2 WHERE id = %d", $post[0]->network_id);
+        $find_user = $wpdb->get_results($query);
+        $record_key =0;
+        $post_url = $post[0]->response;
+        error_log(2);
     
-    // Execute request and fetch response
-    $response = curl_exec($ch);
-    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
+        if (preg_match('/\/([^\/]+)$/', $post_url, $matches)) {
+            $record_key = $matches[1]; // This will be "3kld4r62lcs2k"
+            echo "Extracted Post ID: " . $record_key;
+        }
+        error_log($record_key);
+        if(empty($record_key)){
+            wp_send_json_error(
+                ['msg' => "post uri is not saved properly, you need to delete maually"]);
+                
+        }
+        $did = $find_user[0]->did;
+        $password = $find_user[0]->password;
+        $refreshtoken = $find_user[0]->refreshJWT;
+        error_log("refresh token");
+        error_log($refreshtoken);
+        $access_jwt = refresh_accress_token($refreshtoken);
+        if($access_jwt['status']==0){
+            wp_send_json_error(
+                ['msg' => "your credentials are wrong"]);
+        }
+        error_log("access token");
+        error_log(print_r($access_jwt,true));
+        $access_jwt = $access_jwt['token'];
+        $url = "https://bsky.social/xrpc/com.atproto.repo.deleteRecord";
+    
+        $body = json_encode([
+            'repo' => $did,
+            'collection' => 'app.bsky.feed.post',
+            'rkey' => $record_key, // Record key to delete
+        ]);
+    
+        // Initialize cURL
+        $ch = curl_init($url);
+        
+        // Set cURL options
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            "Content-Type: application/json",
+            "Authorization: Bearer $access_jwt",
+        ]);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
 
-    // Check response
-    if ($http_code !== 200) {
-        return [
-            'error' => 'Failed to delete the post.',
-            'http_code' => $http_code,
-            'response' => $response,
-        ];
+        // Execute request and fetch response
+        $response = curl_exec($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        error_log(print_r($response,true));
+    
+        // Check response
+        if ($http_code !== 200) {
+            wp_send_json_error(
+                ['msg' => "can not delete from bluesky please check manually"]);
+       
+        }
+
     }
+    else{
+        wp_send_json_success(
+            ['msg' => "post success fully deleted"]);
+    }
+    $result = $wpdb->delete($table_name, ['id' => $post_id]);
+    
+
 
     // Decode and return response
     return json_decode($response, true);
@@ -413,7 +450,6 @@ function bluesky_submit_post() {
         $i = 0;
         foreach($selected_networks as $net){
 add_action('wp_ajax_fetch_bluesky_posts', 'bluesky_fetch_posts');
-add_action('wp_ajax_nopriv_fetch_bluesky_posts', 'bluesky_fetch_posts'); // For non-logged-in users, if needed
 
             $net = intval($net);
             $table_name2 = $wpdb->prefix . 'bluesky_networks'; 
@@ -631,9 +667,115 @@ function update_scheduled_post() {
 
     wp_die(); // Always call this at the end of the function to terminate the request properly
 }
+function bluesky_schedule_post() {
+    global $wpdb;
+    if (!current_user_can('administrator')) {
+        wp_send_json_error(['message' => 'hi dear you can not access it :)'], 403);
+    }
+    if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'bluesky_nonce')) {; 
+        wp_send_json_error(['message' => 'Invalid nonce.']);
+    }
+    $table_name = $wpdb->prefix . 'bluesky_scheduled_posts';
+    $search = isset($_POST['search']) ? sanitize_text_field($_POST['search']) : '';
+    $page = isset($_POST['page']) ? intval($_POST['page']) : 1;
+    $posts_per_page = 10;
+
+    $offset = ($page - 1) * $posts_per_page;
+
+    // Base query
+    $query = "SELECT * FROM $table_name WHERE 1=1";
+
+    // Search filter
+    if (!empty($search)) {
+        $query .= $wpdb->prepare(" AND message LIKE %s", '%' . $wpdb->esc_like($search) . '%');
+    }
+
+    // Network filter
+    if (!empty($network)) {
+        $query .= $wpdb->prepare(" AND network_name = %s", $network);
+    }
+
+    // Order by latest
+    $query .= " ORDER BY id DESC LIMIT %d OFFSET %d";
+    $query = $wpdb->prepare($query, $posts_per_page, $offset);
+
+    // Fetch posts
+    $posts = $wpdb->get_results($query);
+
+    // Count total posts for pagination
+    $total_query = "SELECT COUNT(*) FROM $table_name WHERE 1=1";
+    if (!empty($search)) {
+        $total_query .= $wpdb->prepare(" AND message LIKE %s", '%' . $wpdb->esc_like($search) . '%');
+    }
+    if (!empty($network)) {
+        $total_query .= $wpdb->prepare(" AND network_name = %s", $network);
+    }
+    $total_posts = $wpdb->get_var($total_query);
+    error_log($total_posts);
+
+    // Build HTML for posts
+    ob_start();
+    if ($posts) {
+        foreach ($posts as $post) {
+            $network = $post->network_name;
+            $network = str_replace('"', '',$network);
+            
+            ?>
+            
+            <tr>
+                <td><?php echo esc_html($post->id); ?></td>
+                <td><?php echo esc_html($post->message); ?></td>
+                <td>
+                    <?php if ($post->attachment_url): ?>
+                        <?php if (strpos($post->attachment_url, '.mp4') !== false): ?>
+                            <a href="<?php echo esc_url($post->attachment_url); ?>" target="_blank">View Video</a>
+                        <?php else: ?>
+                            <a href="<?php echo esc_url($post->attachment_url); ?>" target="_blank">View Image</a>
+                        <?php endif; ?>
+                    <?php else: ?>
+                        No Attachment
+                    <?php endif; ?>
+                </td>
+                <td><?php echo esc_html($network); ?></td>
+                <td><label class="switch">
+                    <input type="checkbox" class="status-toggle" id="status-toggle" data-id="<?php echo $post->id; ?>" <?php echo $post->posted_status == 0 ? 'checked' : ''; ?>>
+                    <span class="slider round"></span>
+                    </label>
+            </td>
+                <td><?php echo esc_html($post->schedule_time); ?></td>
+                <td>
+                    <a href="#" class="delete-post" id="delete-post" data-id="<?php echo esc_attr($post->id); ?>">Delete</a>
+                </td>
+            </tr>
+            <?php
+        }
+    } else {
+        echo '<tr><td colspan="5">No posts found.</td></tr>';
+    }
+    $posts_html = ob_get_clean();
+
+    // Build pagination HTML
+    $total_pages = ceil($total_posts / $posts_per_page);
+    ob_start();
+    if ($total_pages > 1) {
+        for ($i = 1; $i <= $total_pages; $i++) {
+            $active = ($i == $page) ? 'active' : '';
+            echo "<a href='#' class='pagination-link $active' data-page='$i'>$i</a> ";
+        }
+    }
+    $pagination_html = ob_get_clean();
+
+    // Return response
+    wp_send_json_success([
+        'posts_html' => $posts_html,
+        'pagination_html' => $pagination_html,
+        'total_pages'=>$total_pages
+    ]);
+}
+
+
 function bluesky_fetch_posts() {
     global $wpdb;
-    // Validate nonce
     if (!current_user_can('administrator')) {
         wp_send_json_error(['message' => 'hi dear you can not access it :)'], 403);
     }
@@ -717,7 +859,7 @@ function bluesky_fetch_posts() {
                     ?>
                 </td>
                 <td>
-                    <a href="#" class="delete-post" data-id="<?php echo esc_attr($post->id); ?>">Delete</a>
+                    <a href="#" class="delete-post" id="delete-posted-post" data-id="<?php echo esc_attr($post->id); ?>">Delete</a>
                 </td>
             </tr>
             <?php
