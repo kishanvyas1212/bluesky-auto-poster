@@ -1,4 +1,5 @@
 <?php
+require_once 'ajax.php';
 add_action('admin_menu', 'bluesky_poster_menu');
 function bluesky_poster_menu() {
     add_menu_page(
@@ -46,7 +47,18 @@ function bluesky_poster_menu() {
         'bluesky-view-posts',
         'bluesky_view_posts'
     );
+
+    // Add the new settings page
+    add_submenu_page(
+        'bluesky-poster',
+        'Bluesky Settings',
+        'Settings',
+        'manage_options',
+        'bluesky-settings',
+        'bluesky_settings_page'
+    );
 }
+
 function bluesky_poster_dashboard(){
     global $wpdb;
 
@@ -358,18 +370,106 @@ function bluesky_manage_posts() {
 </div>
     <?php
 }
+add_action('admin_init', 'bluesky_register_settings');
+function bluesky_register_settings() {
+    // Register settings
+    register_setting('bluesky_settings_group', 'bluesky_cron_time');
+    register_setting('bluesky_settings_group', 'bluesky_delete_posts');
+    register_setting('bluesky_settings_group', 'bluesky_refresh_token_interval');
 
+    // Add settings section
+    add_settings_section(
+        'bluesky_settings_section',
+        'Bluesky Poster Settings',
+        'bluesky_settings_section_callback',
+        'bluesky-settings'
+    );
 
+    // Add fields
+    add_settings_field(
+        'bluesky_cron_time',
+        'Cron Time for Scheduling Posts',
+        'bluesky_cron_time_callback',
+        'bluesky-settings',
+        'bluesky_settings_section'
+    );
+
+    add_settings_field(
+        'bluesky_delete_posts',
+        'Delete Posts from Bluesky on Post Deletion',
+        'bluesky_delete_posts_callback',
+        'bluesky-settings',
+        'bluesky_settings_section'
+    );
+
+    add_settings_field(
+        'bluesky_refresh_token_interval',
+        'Cron Interval for Refresh Token',
+        'bluesky_refresh_token_callback',
+        'bluesky-settings',
+        'bluesky_settings_section'
+    );
+}
+
+function bluesky_settings_section_callback() {
+    echo '<p>Configure the settings for the Bluesky Automated Poster plugin.</p>';
+}
+
+// Callback for Cron Time
+function bluesky_cron_time_callback() {
+    $value = get_option('bluesky_cron_time', 5); // Default to 5 minutes
+    echo '<input type="number" name="bluesky_cron_time" value="' . esc_attr($value) . '" min="1" step="1">';
+    echo '<p class="description">Enter the cron time interval in minutes. Default is 5 minutes.</p>';
+}
+
+// Callback for Delete Posts Option
+function bluesky_delete_posts_callback() {
+    $value = get_option('bluesky_delete_posts', 0); // Default to No (0)
+    echo '<select name="bluesky_delete_posts">';
+    echo '<option value="0"' . selected($value, 0, false) . '>No</option>';
+    echo '<option value="1"' . selected($value, 1, false) . '>Yes</option>';
+    echo '</select>';
+    echo '<p class="description">Choose whether to delete posts from Bluesky when they are deleted from WordPress. Default is No.</p>';
+}
+
+// Callback for Refresh Token Interval
+function bluesky_refresh_token_callback() {
+    $value = get_option('bluesky_refresh_token_interval', 12); // Default to 12 hours
+    echo '<select name="bluesky_refresh_token_interval">';
+    echo '<option value="1"' . selected($value, 1, false) . '>1 Hour</option>';
+    echo '<option value="2"' . selected($value, 2, false) . '>2 Hours</option>';
+    echo '<option value="12"' . selected($value, 12, false) . '>12 Hours</option>';
+    echo '</select>';
+    echo '<p class="description">Set the cron interval for refreshing the refresh token. Default is 12 hours.</p>';
+}
+
+function bluesky_settings_page() {
+    if (!current_user_can('manage_options')) {
+        return;
+    }
+
+    echo '<div class="wrap">';
+    echo '<h1>Bluesky Settings</h1>';
+    echo '<form method="post" action="options.php">';
+    settings_fields('bluesky_settings_group');
+    do_settings_sections('bluesky-settings');
+    submit_button();
+    echo '</form>';
+    echo '</div>';
+}
 function bluesky_view_posts() {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'bluesky_posted_posts';
-
-    // Fetch posted posts (filtering out only those with a status that is "posted" or similar)
-    $posted_posts = $wpdb->get_results("SELECT * FROM $table_name WHERE 1");
-
     ?>
     <div class="wrap">
-        <h2>View Posted Post</h2>
+        <h2>View Posted Posts</h2>
+        <div class="filter-bar">
+            <input type="text" id="search-posts" placeholder="Search posts..." />
+            <select id="network-filter">
+                <option value="">All Networks</option>
+                <option value="Network1">Network1</option>
+                <option value="Network2">Network2</option>
+            </select>
+            <button id="search-button">Search</button>
+        </div>
         <table class="wp-list-table widefat fixed striped">
             <thead>
                 <tr>
@@ -378,75 +478,15 @@ function bluesky_view_posts() {
                     <th>Attachment</th>
                     <th>Bluesky Networks</th>
                     <th>response</th>
-                    
+                    <th>Action</th>
                 </tr>
             </thead>
-            <tbody>
-                <?php if ($posted_posts): ?>
-                    <?php foreach ($posted_posts as $post): ?>
-           <?php             $table_name2 = $wpdb->prefix . 'bluesky_networks';
-            $query = $wpdb->prepare("SELECT * FROM $table_name2 WHERE id = %d", $post->network_id);
-            $find_user = $wpdb->get_results($query);
-            if (!empty($find_user) && is_array($find_user) && isset($find_user[0])) {
-                $username = $find_user[0]->username;
-            }
-            
-            
-            ?>    
-            <tr>
-                            <td><?php echo esc_html($post->id); ?></td>
-                            <td><?php echo esc_html($post->message); ?></td>
-                            <td>
-                                <?php if ($post->attachment_url): ?>
-                                    <?php if (strpos($post->attachment_url, '.mp4') !== false): ?>
-                                        <a href="#" class="view-attachment" data-url="<?php echo esc_url($post->attachment_url); ?>" data-type="video">View Video</a>
-                                    <?php else: ?>
-                                        <a href="#" class="view-attachment" data-url="<?php echo esc_url($post->attachment_url); ?>" data-type="image">View Image</a>
-                                    <?php endif; ?>
-                                <?php else: ?>
-                                    No Attachment
-                                <?php endif; ?>
-                            </td>
-                            <td>
-                                <?php
-                                // Get the network names associated with this post
-                                $network =$post->network_name;
-                                if(!empty($network)) {
-                                $network = str_replace('"',"",$network);
-                            }
-                                if ($network) {
-                                    echo esc_html($network);
-                                } else {
-                                    echo "No Networks";
-                                }
-                                ?>
-                            </td>
-                            <td>
-                            <?php if ($post->response !=0): ?>
-    <?php 
-    // Decode the JSON response to check the URI
-    
-    $post_url = $post->response;
-       echo '<span class="status success"><a href="' . esc_url($post_url) . '" target="_blank">View Post</a></span>';
-    ?>
-<?php else: 
-    echo '<span class="status failed">' . esc_html($post->actual_response) . '</span>';
-    ?>
-<?php endif; ?>
-
-                            </td>
-
-                        </tr>
-                    <?php endforeach; ?>
-                <?php else: ?>
-                    <tr>
-                        <td colspan="6">No posted posts found.</td>
-                    </tr>
-                <?php endif; ?>
+            <tbody id="posts-table-body">
+                <!-- AJAX content will be loaded here -->
             </tbody>
         </table>
+        <div id="pagination-links" class="pagination-links" style="text-align: right;"></div>
     </div>
     <?php
-    
-    
 }
+    

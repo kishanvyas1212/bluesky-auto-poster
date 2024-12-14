@@ -1,10 +1,44 @@
 <?php
-add_action('bluesky_cron_job_hook', 'bluesky_process_scheduled_posts');
-
 require_once 'posting_to_bluesky.php'; 
 require_once 'ajax.php';
+add_action('bluesky_cron_job_hook', 'bluesky_process_scheduled_posts');
+// Callback function that runs on each scheduled refresh
+add_action('bluesky_refresh_token_hook', 'bluesky_refresh_tokens_for_all_networks');
+function bluesky_refresh_tokens_for_all_networks() {
+    // Get all networks from the database
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'bluesky_networks'; // Your networks table
+    $networks = $wpdb->get_results("SELECT * FROM $table_name WHERE status=1");
+
+    if ($networks) {
+        // Loop through each network and call the refresh token function
+        foreach ($networks as $network) {
+            $username = $network ->username;
+            $password = $network->password;
+            $response = generate_refresh_token($username,$password);
+            if($response!=0){
+                $refresh_token=$response['refresh_token'];
+                $wpdb->update(
+                    $table_name,
+                    [
+                        'refreshJwt' => $refresh_token,
+                       
+                    ],
+                    ['id' => $network->id],
+                    ['%s'],
+                    ['%d']
+                );
+            }
+
+
+        }
+    } else {
+        error_log("No networks found for token refresh.");
+    }
+}
 
 function bluesky_process_scheduled_posts() {
+    error_log("Cron run");
     global $wpdb;
     $table_name = $wpdb->prefix . 'bluesky_scheduled_posts';
     $current_utc_time = time(); // Current UTC timestamp

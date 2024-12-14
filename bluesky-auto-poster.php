@@ -23,6 +23,7 @@ function create_bluesky_tables() {
     $table_name2 = $wpdb->prefix . 'bluesky_scheduled_posts';
     $table_name3 = $wpdb->prefix . 'bluesky_posted_posts';
     $table_name4 = $wpdb->prefix . 'bluesky_posts_reports';
+    $table_logs = $wpdb->prefix . 'bluesky_logs'; 
 
     // Check if the tables exist
     if ($wpdb->get_var("SHOW TABLES LIKE '$table_name1'") != $table_name1) {
@@ -71,24 +72,140 @@ function create_bluesky_tables() {
         ) $charset_collate;";
         $wpdb->query($sql);
     }
-    
+    if ($wpdb->get_var("SHOW TABLES LIKE '$table_logs'") != $table_logs) {
+        $charset_collate = $wpdb->get_charset_collate();
+        $sql = "CREATE TABLE $table_logs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            type INT NOT NULL,
+            log_name TEXT NOT NULL,
+            log_data TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) $charset_collate;";
+        $wpdb->query($sql);
+    }
 }
 register_activation_hook(__FILE__, 'create_bluesky_tables');
+// Register a custom cron schedule globally
+add_filter('cron_schedules', 'bluesky_custom_cron_schedules');
+function bluesky_custom_cron_schedules($schedules) {
+    // Retrieve the user-defined cron interval (default 5 minutes)
+    $cron_interval = (int) get_option('bluesky_cron_time', 5);
+
+    // Validate and convert to seconds
+    if ($cron_interval < 1) {
+        $cron_interval = 5; // Fallback to 5 minutes if invalid value is set
+    }
+    $interval_in_seconds = $cron_interval * 60;
+
+    // Register the custom interval
+    $schedules['bluesky_custom_interval'] = [
+        'interval' => $interval_in_seconds,
+        'display'  => sprintf(__('Every %d minutes'), $cron_interval),
+    ];
+
+    return $schedules;
+}
+
+// Register activation hook to set up the initial cron job
 register_activation_hook(__FILE__, 'bluesky_schedule_cron_job');
 function bluesky_schedule_cron_job() {
-    error_log("this one");
+    // Ensure custom cron schedule is available
+    add_filter('cron_schedules', 'bluesky_custom_cron_schedules');
+
+    // Clear any existing scheduled events
+    bluesky_clear_cron_job();
+
+    // Schedule the cron job with the current settings
     if (!wp_next_scheduled('bluesky_cron_job_hook')) {
-        wp_schedule_event(time(), 'every_five_minutes', 'bluesky_cron_job_hook');
+        wp_schedule_event(time(), 'bluesky_custom_interval', 'bluesky_cron_job_hook');
+        error_log("Cron job scheduled with custom interval.");
+    } else {
+        error_log("Cron job already exists.");
     }
-    
 }
+
+// Register deactivation hook to clear the cron job
 register_deactivation_hook(__FILE__, 'bluesky_clear_cron_job');
 function bluesky_clear_cron_job() {
     $timestamp = wp_next_scheduled('bluesky_cron_job_hook');
     if ($timestamp) {
         wp_unschedule_event($timestamp, 'bluesky_cron_job_hook');
+        error_log("Cron job cleared.");
     }
 }
+
+// Hook into settings update to reschedule cron dynamically
+add_action('update_option_bluesky_cron_time', 'bluesky_on_cron_time_change', 10, 2);
+function bluesky_on_cron_time_change($old_value, $new_value) {
+    error_log("Settings updated: Old interval = $old_value, New interval = $new_value");
+
+    // Clear existing scheduled events
+    bluesky_clear_cron_job();
+
+    // Schedule the cron job with the new settings
+    bluesky_schedule_cron_job();
+}
+// Register a custom cron schedule globally for refreshing tokens
+add_filter('cron_schedules', 'bluesky_custom_refresh_token_schedules');
+function bluesky_custom_refresh_token_schedules($schedules) {
+    // Retrieve the user-defined refresh token interval (default 12 hours)
+    $refresh_token_interval = (int) get_option('bluesky_refresh_token_interval', 12);
+
+    // Validate and convert to seconds (12 hours by default)
+    if ($refresh_token_interval < 1) {
+        $refresh_token_interval = 12; // Fallback to 12 hours if invalid value is set
+    }
+    $interval_in_seconds = $refresh_token_interval * 60 * 60; // Convert to seconds
+
+    // Register the custom refresh token interval
+    $schedules['bluesky_refresh_token_interval'] = [
+        'interval' => $interval_in_seconds,
+        'display'  => sprintf(__('Every %d hours'), $refresh_token_interval),
+    ];
+
+    return $schedules;
+}
+
+// Register activation hook to set up the initial cron job for token refresh
+register_activation_hook(__FILE__, 'bluesky_schedule_refresh_token_cron_job');
+function bluesky_schedule_refresh_token_cron_job() {
+    // Ensure the custom cron schedule is available
+    add_filter('cron_schedules', 'bluesky_custom_refresh_token_schedules');
+
+    // Clear any existing scheduled events
+    bluesky_clear_refresh_token_cron_job();
+
+    // Schedule the refresh token cron job with the current settings
+    if (!wp_next_scheduled('bluesky_refresh_token_hook')) {
+        wp_schedule_event(time(), 'bluesky_refresh_token_interval', 'bluesky_refresh_token_hook');
+        error_log("Token refresh cron job scheduled with custom interval.");
+    } else {
+        error_log("Token refresh cron job already exists.");
+    }
+}
+
+// Register deactivation hook to clear the refresh token cron job
+register_deactivation_hook(__FILE__, 'bluesky_clear_refresh_token_cron_job');
+function bluesky_clear_refresh_token_cron_job() {
+    $timestamp = wp_next_scheduled('bluesky_refresh_token_hook');
+    if ($timestamp) {
+        wp_unschedule_event($timestamp, 'bluesky_refresh_token_hook');
+        error_log("Token refresh cron job cleared.");
+    }
+}
+
+// Hook into settings update to reschedule the refresh token cron job dynamically
+add_action('update_option_bluesky_refresh_token_interval', 'bluesky_on_refresh_token_interval_change', 10, 2);
+function bluesky_on_refresh_token_interval_change($old_value, $new_value) {
+    error_log("Settings updated: Old interval = $old_value, New interval = $new_value");
+
+    // Clear existing scheduled events
+    bluesky_clear_refresh_token_cron_job();
+
+    // Schedule the refresh token cron job with the new settings
+    bluesky_schedule_refresh_token_cron_job();
+}
+
 
 
 // Include necessary files
