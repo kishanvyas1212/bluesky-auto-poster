@@ -51,14 +51,114 @@ function generate_refresh_token($username,$password){
         $access_jwt = $login_data['accessJwt'];
         $refresh_jwt = $login_data['refreshJwt'];
         return ['refresh_token'=>$refresh_jwt,
+                'access_jwt'=>$access_jwt,
         'did'=>$did];
     }
     else return 0;
 
 }
 function add_log(){
-
+    
 }
+function bluesky_download_and_save_profile_image($image_url, $username) {
+    // Check if the image URL is valid
+    if (empty($image_url) || !filter_var($image_url, FILTER_VALIDATE_URL)) {
+        return new WP_Error('invalid_url', 'Invalid image URL');
+    }
+
+    // Extract the name from the username (e.g., name.bsky.social -> name)
+    $name_parts = explode('.', $username);
+    $name_only = sanitize_file_name($name_parts[0]); // Get only the name before the first dot
+
+    // Get the WordPress uploads directory
+    $upload_dir = wp_upload_dir();
+
+    // Handle missing file extension by checking the Content-Type header
+    $image_data = pathinfo($image_url);
+    $extension = isset($image_data['extension']) ? $image_data['extension'] : '';
+    if (empty($extension)) {
+        $response = wp_remote_head($image_url);
+        if (!is_wp_error($response) && isset($response['headers']['content-type'])) {
+            $mime_type = $response['headers']['content-type'];
+            $extension = match ($mime_type) {
+                'image/jpeg' => 'jpg',
+                'image/png' => 'png',
+                'image/gif' => 'gif',
+                default => 'jpg', // Default to .jpg if unknown
+            };
+        } else {
+            $extension = 'jpg'; // Fallback to .jpg
+        }
+    }
+
+    // Create a unique filename
+    $filename = 'profile-' . $name_only . '.' . $extension;
+    $file_path = $upload_dir['path'] . '/' . $filename;
+
+    // Download the image
+    $image_content = wp_remote_get($image_url);
+    if (is_wp_error($image_content)) {
+        return new WP_Error('image_download_failed', 'Failed to download image');
+    }
+
+    // Save the image locally
+    $result = file_put_contents($file_path, wp_remote_retrieve_body($image_content));
+    if (!$result) {
+        return new WP_Error('file_save_failed', 'Failed to save image file');
+    }
+
+    // Create the URL for the saved image
+    $file_url = $upload_dir['url'] . '/' . $filename;
+
+    // Return the local URL of the saved image
+    return $file_url;
+}
+
+function bluesky_fetch_and_save_profile_image($did, $network_id,$access_token) {
+    // API endpoint for getting profile
+    $url = 'https://bsky.social/xrpc/app.bsky.actor.getProfile';
+
+    // Build the query parameters
+
+    $url = add_query_arg(['actor' => $did], $url);
+
+    // Prepare headers with the access token
+    $headers = [
+        'Authorization' => 'Bearer ' . $access_token,
+    ];
+    $response = wp_remote_get($url, [
+        'headers' => $headers,
+    ]);
+
+    if (is_wp_error($response)) {
+        return new WP_Error('request_failed', 'Failed to fetch profile data: ' . $response->get_error_message());
+    }
+    
+
+    // Check for errors
+    // Decode the response body
+    $response_body = wp_remote_retrieve_body($response);
+    $data = json_decode($response_body, true);
+
+    // Check if avatar URI is present
+    if (empty($data['avatar'])) {
+        return new WP_Error('missing_avatar', 'Avatar URI not found in the response');
+    }
+
+    $avatar_uri = $data['avatar'];
+
+    // Use the function to download and save the profile image
+    $file_url = bluesky_download_and_save_profile_image($avatar_uri, $network_id);
+
+    // Check if image download was successful
+    if (is_wp_error($file_url)) {
+        return $file_url; // Return the error
+    }
+
+    // Return the file URL of the saved image
+    return $file_url;
+}
+
 
 function bluesky_delete_posted_post(){
     
@@ -70,42 +170,38 @@ function bluesky_delete_posted_post(){
     }
     $post_id = $_POST['post_id'];
     global $wpdb;
+    $table_name = $wpdb->prefix . 'bluesky_posted_posts';
+    $query = $wpdb->prepare("SELECT * FROM $table_name WHERE id = %d", $post_id);
+    $post = $wpdb->get_results($query);
     
+    $result = $wpdb->delete($table_name, ['id' => $post_id]);
+    if (!$result) {
+        wp_send_json_error(['msg' => "Failed to delete post from database"]);
+    }
     $delete_status = get_option('bluesky_delete_posts', 0); 
     if($delete_status == 1){
-        error_log(1);
-        $table_name = $wpdb->prefix . 'bluesky_posted_posts';
-        $query = $wpdb->prepare("SELECT * FROM $table_name WHERE id = %d", $post_id);
-        $post = $wpdb->get_results($query);
+        
         $table_name2 = $wpdb->prefix . 'bluesky_networks';
         $query = $wpdb->prepare("SELECT * FROM $table_name2 WHERE id = %d", $post[0]->network_id);
         $find_user = $wpdb->get_results($query);
         $record_key =0;
         $post_url = $post[0]->response;
-        error_log(2);
-    
+        
         if (preg_match('/\/([^\/]+)$/', $post_url, $matches)) {
-            $record_key = $matches[1]; // This will be "3kld4r62lcs2k"
-            echo "Extracted Post ID: " . $record_key;
+            $record_key = $matches[1]; 
         }
-        error_log($record_key);
         if(empty($record_key)){
             wp_send_json_error(
-                ['msg' => "post uri is not saved properly, you need to delete maually"]);
-                
-        }
+                ['msg' => "post uri is not saved properly, you need to delete maually"]);  }
         $did = $find_user[0]->did;
         $password = $find_user[0]->password;
         $refreshtoken = $find_user[0]->refreshJWT;
-        error_log("refresh token");
-        error_log($refreshtoken);
+
         $access_jwt = refresh_accress_token($refreshtoken);
         if($access_jwt['status']==0){
             wp_send_json_error(
                 ['msg' => "your credentials are wrong"]);
         }
-        error_log("access token");
-        error_log(print_r($access_jwt,true));
         $access_jwt = $access_jwt['token'];
         $url = "https://bsky.social/xrpc/com.atproto.repo.deleteRecord";
     
@@ -131,21 +227,21 @@ function bluesky_delete_posted_post(){
         $response = curl_exec($ch);
         $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
-        error_log(print_r($response,true));
     
         // Check response
         if ($http_code !== 200) {
             wp_send_json_error(
-                ['msg' => "can not delete from bluesky please check manually"]);
-       
-        }
+                ['msg' => "Post deleted but not deleted from the bluesky please delete manually"]);
+                   }
+        wp_send_json_success(
+            ['msg' => "post success fully deleted from site and bluesky"]);
+        
 
     }
     else{
         wp_send_json_success(
             ['msg' => "post success fully deleted"]);
     }
-    $result = $wpdb->delete($table_name, ['id' => $post_id]);
     
 
 
@@ -189,7 +285,6 @@ function refresh_accress_token($refresh_jwt){
 
     // Check for successful response
     if ($http_status === 200 && isset($decoded_response['accessJwt'])) {
-        error_log($decoded_response['accessJwt']);
         return ['token'=> $decoded_response['accessJwt'],'status'=> 1]; // Return accessJwt
     } else {
         return [
@@ -214,28 +309,30 @@ function add_bluesky_network() {
     $network_name = sanitize_text_field($_POST['network_name']);
     $username = sanitize_text_field($_POST['username']);
     $password = sanitize_text_field($_POST['password']);
-    error_log($network_name);
+    
     if (!$network_name || !$username || !$password) {
         wp_send_json_error(['message' => 'All fields are required.']);
     }
     
     $response = generate_refresh_token($username,$password);
     $refreshJWT = $response['refresh_token'];
+    $access_jwt = $response['access_jwt'];
     $did = $response['did'];
-
+    $profile_response = bluesky_fetch_and_save_profile_image($did, $username,$access_jwt);
+    error_log(print_r($profile_response,true));
     if($refreshJWT!=0){ 
     $result = $wpdb->insert($table_name, [
         'network_name' => $network_name,
         'username' => $username,
         'password' => $password,
         'refreshJWT' =>$refreshJWT,
-        'did' =>$did
+        'did' =>$did,
+        'avatar' =>$profile_response,
     ]);
     }
     else{
         wp_send_json_error(['message' => 'Can not generated refresh token please try again']);
     }
-    error_log(print_r($result,true));
     if ($result) {
         wp_send_json_success(['message' => 'Network added successfully!']);
     } else {
@@ -317,7 +414,10 @@ function update_bluesky_network() {
     
     $response = generate_refresh_token($username,$password);
     $refreshJWT = $response['refresh_token'];
+    $access_jwt = $response['access_jwt'];
     $did = $response['did'];
+    $profile_response = bluesky_fetch_and_save_profile_image($did, $username,$access_jwt);
+    error_log(print_r($profile_response,true));
 
     if (!$network_id || !$network_name || !$username || !$password) {
         wp_send_json_error(['message' => 'All fields are required.']);
@@ -334,9 +434,10 @@ function update_bluesky_network() {
             'username' => $username,
             'password' => $password,
             'refreshJwt' => $refreshJWT,
+            'avatar' => $profile_response,
         ],
         ['id' => $network_id],
-        ['%s', '%s', '%s','%s'],
+        ['%s', '%s', '%s','%s','%s'],
         ['%d']
     );
 
@@ -594,7 +695,7 @@ function fetch_scheduled_post_details() {
     
     if (!isset($_POST['post_id'])) {
         wp_send_json_error(array('message' => 'Post ID is required.'));
-        error_log('Post ID is required.');
+        
         return;
     }
 
@@ -711,8 +812,7 @@ function bluesky_schedule_post() {
         $total_query .= $wpdb->prepare(" AND network_name = %s", $network);
     }
     $total_posts = $wpdb->get_var($total_query);
-    error_log($total_posts);
-
+    
     // Build HTML for posts
     ob_start();
     if ($posts) {

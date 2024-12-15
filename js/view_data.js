@@ -105,13 +105,14 @@
         setTimeout(() => {
           messageContainer.style.display = 'none';
           messageContainer.classList.remove('success', 'error');
-        }, 3000);
+        }, 2000);
       }
     $(document).ready(function () {
         $(document).on('click','#delete-posted-post', function (e){
         e.preventDefault();
         if (!confirm('Are you sure you want to delete this post?')) return;
         const postId = $(this).data('id');
+        $('#loader-overlay').show();
             $.ajax({
                 url: ajaxurl,
                 type: 'POST',
@@ -123,7 +124,7 @@
                 success: function (response) {
                     if (response.success) {
                         console.log("inside succcess");
-                        console.log(response.message)
+
                         displayMessage(response.data.msg,'success')
                         setTimeout(() => {
                             location.reload();
@@ -136,7 +137,7 @@
                     }
                 },
                 error: function () {
-
+                    $('#loader-overlay').hide();
                     alert('Error while deleting post.');
                 }
             });

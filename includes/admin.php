@@ -236,13 +236,13 @@ function bluesky_create_post_page(){
         $table_name = $wpdb->prefix . 'bluesky_networks';
 
         // Fetch networks with status = 1
-        $networks = $wpdb->get_results("SELECT id, network_name FROM $table_name WHERE status = 1");
+        $networks = $wpdb->get_results("SELECT id, network_name, avatar FROM $table_name WHERE status = 1");
 
         if ($networks) {
             foreach ($networks as $network) {
                 ?>
                 <div class="network-icon" data-id="<?php echo esc_attr($network->id); ?>" title="<?php echo esc_attr($network->network_name); ?>">
-                    <img src="default-icon.png" alt="<?php echo esc_attr($network->network_name); ?>" />
+                    <img src="<?php echo $network->avatar; ?>" alt="<?php echo esc_attr($network->network_name); ?>" id="avatar" />
                 </div>
                 <?php
             }
@@ -277,12 +277,14 @@ function bluesky_create_post_page(){
 }
  
 function bluesky_manage_posts() {
+    
+    $image_url = plugins_url('images/loader.gif', __FILE__)
     ?>
     <div class="wrap">
         <h2>View scheduled Posts</h2>
         <div class="filter-bar">
             <input type="text" id="search-posts" placeholder="Search posts..." />
-
+            
             <button id="search-button">Search</button>
         </div>
         <table class="wp-list-table widefat fixed striped">
@@ -302,6 +304,13 @@ function bluesky_manage_posts() {
             </tbody>
         </table>
         <div id="pagination-links" class="pagination-links" style="text-align: right;"></div>
+        <div id="message-container"></div>  
+        <div id="loader-overlay" style="display: none;">
+        <div id="loader-container">
+    <img src="<?php echo esc_url($image_url); ?>" alt="Loading..." />
+
+        <p>Processing, please wait...</p>
+    </div>
     </div>
     <?php
 }
@@ -393,9 +402,16 @@ function bluesky_settings_page() {
     echo '</div>';
 }
 function bluesky_view_posts() {
+    $image_url = plugins_url('images/loader.gif', __FILE__)
     ?>
     <div id="message-container"></div>
-    <div class="wrap">
+    <div id="loader-overlay" style="display: none;">
+    <div id="loader-container">
+    <img src="<?php echo esc_url($image_url); ?>" alt="Loading..." />
+
+        <p>Processing, please wait...</p>
+    </div>
+</div>    <div class="wrap">
         <h2>View Posted Posts</h2>
         <div class="filter-bar">
             <input type="text" id="search-posts" placeholder="Search posts..." />

@@ -4,7 +4,10 @@ Plugin Name: Bluesky Auto Poster
 Description: Automatically post to Bluesky from WordPress.
 Version: 1.0
 Author: Kishan Vyas
+License: GPLv2 or later
+License URI: https://www.gnu.org/licenses/gpl-2.0.html
 */
+
 
 if (!defined('ABSPATH')) exit; // Exit if accessed directly
 // Add custom cron schedule for every minute.
@@ -35,6 +38,7 @@ function create_bluesky_tables() {
             password VARCHAR(255) NOT NULL,
             refreshJWT TEXT NOT NULL,
             did TEXT NOT NULL,
+            avatar TEXT NOT NULL,
             status TINYINT(1) DEFAULT 1
 
         ) $charset_collate;";
@@ -255,11 +259,13 @@ function bluesky_enqueue_styles() {
         'bluesky-popup-styles',
         plugin_dir_url(__FILE__) . 'css/bluesky-popup-styles.css',
         array(),
-        '1.0'
+        null
     );
 }
 
 add_action('admin_enqueue_scripts', 'bluesky_enqueue_styles');
+add_action('wp_enqueue_scripts', 'bluesky_enqueue_styles');
+
 function enqueue_media_uploader_scripts() {
     wp_enqueue_media(); // Enqueue WordPress Media Uploader
     wp_enqueue_script('media-uploader-js', plugin_dir_url(__FILE__) . 'js/media-uploader.js', ['jquery'], null, true);
